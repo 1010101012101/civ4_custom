@@ -1,0 +1,27 @@
+Microsoft Visual Studio Solution File, Format Version 8.00
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CvGameCoreDLL", "CvGameCoreDLL.vcproj", "{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}"
+	ProjectSection(ProjectDependencies) = postProject
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfiguration) = preSolution
+		Debug = Debug
+		Final Debug = Final Debug
+		Final Release = Final Release
+		Release = Release
+	EndGlobalSection
+	GlobalSection(ProjectConfiguration) = postSolution
+		{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}.Debug.ActiveCfg = Debug|Win32
+		{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}.Debug.Build.0 = Debug|Win32
+		{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}.Final Debug.ActiveCfg = Final Debug|Win32
+		{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}.Final Debug.Build.0 = Final Debug|Win32
+		{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}.Final Release.ActiveCfg = Final Release|Win32
+		{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}.Final Release.Build.0 = Final Release|Win32
+		{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}.Release.ActiveCfg = Release|Win32
+		{E323AF8E-688B-4ED7-BA84-269D8F3AAE2D}.Release.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+	EndGlobalSection
+	GlobalSection(ExtensibilityAddIns) = postSolution
+	EndGlobalSection
+EndGlobal
