@@ -319,6 +319,9 @@
     <ClCompile Include="CyGame.cpp">
       <Filter>CyPython\Header</Filter>
     </ClCompile>
+    <ClCompile Include="BetterBTSAI.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AI_Defines.h">

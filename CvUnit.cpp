@@ -27,6 +27,16 @@
 #include "CvPopupInfo.h"
 #include "CvArtFileMgr.h"
 
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      02/24/10                                jdog5000      */
+/*                                                                                              */
+/* AI logging                                                                                   */
+/************************************************************************************************/
+#include "BetterBTSAI.h"
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
+
 // Public Functions...
 
 
@@ -454,7 +464,28 @@ void CvUnit::convert(CvUnit* pUnit)
 	pUnit->getCargoUnits(aCargoUnits);
 	for (uint i = 0; i < aCargoUnits.size(); ++i)
 	{
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       10/30/09                     Mongoose & jdog5000      */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+/* original BTS code
 		aCargoUnits[i]->setTransportUnit(this);
+*/
+		// From Mongoose SDK
+		// Check cargo types and capacity when upgrading transports
+		if (cargoSpaceAvailable(aCargoUnits[i]->getSpecialUnitType(), aCargoUnits[i]->getDomainType()) > 0)
+		{
+			aCargoUnits[i]->setTransportUnit(this);
+		}
+		else
+		{
+			aCargoUnits[i]->setTransportUnit(NULL);
+			aCargoUnits[i]->jumpToNearestValidPlot();
+		}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 	}
 
 	pUnit->kill(true);
@@ -808,6 +839,12 @@ void CvUnit::resolveAirCombat(CvUnit* pInterceptor, CvPlot* pPlot, CvAirMissionD
 		return;
 	}
 
+/********************************************************************************/
+/* 	BETTER_BTS_AI_MOD						10/19/08	Roland J & jdog5000	*/
+/* 																			*/
+/* 	Combat mechanics														*/
+/********************************************************************************/
+	/*
 	int iOurOdds = (100 * iOurStrength) / std::max(1, iTotalStrength);
 
 	int iOurRoundDamage = (pInterceptor->currInterceptionProbability() * GC.getDefineINT("MAX_INTERCEPTION_DAMAGE")) / 100;
@@ -817,10 +854,55 @@ void CvUnit::resolveAirCombat(CvUnit* pInterceptor, CvPlot* pPlot, CvAirMissionD
 		iTheirRoundDamage = std::max(GC.getDefineINT("MIN_INTERCEPTION_DAMAGE"), iTheirRoundDamage);
 	}
 
+	//original BTS code
 	int iTheirDamage = 0;
 	int iOurDamage = 0;
 
 	for (int iRound = 0; iRound < GC.getDefineINT("INTERCEPTION_MAX_ROUNDS"); ++iRound)
+	*/
+	// For air v air, more rounds and factor in strength for per round damage
+	int iOurOdds = (100 * iOurStrength) / std::max(1, iTotalStrength);
+	int iMaxRounds = 0;
+	int iOurRoundDamage = 0;
+	int iTheirRoundDamage = 0;
+
+	// Air v air is more like standard comabt
+	// Round damage in this case will now depend on strength and interception probability
+	if( GC.getBBAI_AIR_COMBAT() && (DOMAIN_AIR == pInterceptor->getDomainType() && DOMAIN_AIR == getDomainType()) )
+	{
+		int iBaseDamage = GC.getDefineINT("AIR_COMBAT_DAMAGE");
+		int iOurFirepower = ((airMaxCombatStr(pInterceptor) + iOurStrength + 1) / 2);
+		int iTheirFirepower = ((pInterceptor->airMaxCombatStr(this) + iTheirStrength + 1) / 2);
+
+		int iStrengthFactor = ((iOurFirepower + iTheirFirepower + 1) / 2);
+
+		int iTheirInterception = std::max(pInterceptor->maxInterceptionProbability(),2*GC.getDefineINT("MIN_INTERCEPTION_DAMAGE"));
+		int iOurInterception = std::max(maxInterceptionProbability(),2*GC.getDefineINT("MIN_INTERCEPTION_DAMAGE"));
+
+		iOurRoundDamage = std::max(1, ((iBaseDamage * (iTheirFirepower + iStrengthFactor) * iTheirInterception) / ((iOurFirepower + iStrengthFactor) * 100)));
+		iTheirRoundDamage = std::max(1, ((iBaseDamage * (iOurFirepower + iStrengthFactor) * iOurInterception) / ((iTheirFirepower + iStrengthFactor) * 100)));
+
+		iMaxRounds = 2*GC.getDefineINT("INTERCEPTION_MAX_ROUNDS") - 1;
+	}
+	else
+	{
+		iOurRoundDamage = (pInterceptor->currInterceptionProbability() * GC.getDefineINT("MAX_INTERCEPTION_DAMAGE")) / 100;
+		iTheirRoundDamage = (currInterceptionProbability() * GC.getDefineINT("MAX_INTERCEPTION_DAMAGE")) / 100;
+		if (getDomainType() == DOMAIN_AIR)
+		{
+			iTheirRoundDamage = std::max(GC.getDefineINT("MIN_INTERCEPTION_DAMAGE"), iTheirRoundDamage);
+		}
+
+		iMaxRounds = GC.getDefineINT("INTERCEPTION_MAX_ROUNDS");
+	}
+
+	int iTheirDamage = 0;
+	int iOurDamage = 0;
+
+	for (int iRound = 0; iRound < iMaxRounds; ++iRound)
+/********************************************************************************/
+/* 	BETTER_BTS_AI_MOD						END								*/
+/********************************************************************************/
 	{
 		if (GC.getGameINLINE().getSorenRandNum(100, "Air combat") < iOurOdds)
 		{
@@ -1077,7 +1159,19 @@ void CvUnit::resolveCombat(CvUnit* pDefender, CvPlot* pPlot, CvBattleDefinition&
 
 	while (true)
 	{
-		if (GC.getGameINLINE().getSorenRandNum(GC.getDefineINT("COMBAT_DIE_SIDES"), "Combat") < iDefenderOdds)
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      02/21/10                                jdog5000      */
+/*                                                                                              */
+/* Lead From Behind                                                                             */
+/************************************************************************************************/
+		// From Lead From Behind by UncutDragon
+		// original
+		//if (GC.getGameINLINE().getSorenRandNum(GC.getDefineINT("COMBAT_DIE_SIDES"), "Combat") < iDefenderOdds)
+		// modified
+		if (GC.getGameINLINE().getSorenRandNum(GC.getCOMBAT_DIE_SIDES(), "Combat") < iDefenderOdds)
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 		{
 			if (getCombatFirstStrikes() == 0)
 			{
@@ -1734,7 +1828,16 @@ bool CvUnit::isActionRecommended(int iAction)
 }
 
 
-bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker) const
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      02/21/10                                jdog5000      */
+/*                                                                                              */
+/* Efficiency, Lead From Behind                                                                 */
+/************************************************************************************************/
+// From Lead From Behind by UncutDragon
+// original
+//bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker) const
+// modified (with extra parameter)
+bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker, int* pBestDefenderRank) const
 {
 	int iOurDefense;
 	int iTheirDefense;
@@ -1788,6 +1891,13 @@ bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttack
 		}
 	}
 
+	// UncutDragon
+	// To cut down on changes to existing code, we just short-circuit the method
+	// and this point and call our own version instead
+	if (GC.getLFBEnable())
+		return LFBisBetterDefenderThan(pDefender, pAttacker, pBestDefenderRank);
+	// /UncutDragon
+
 	iOurDefense = currCombatStr(plot(), pAttacker);
 	if (::isWorldUnitClass(getUnitClassType()))
 	{
@@ -1812,13 +1922,23 @@ bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttack
 	{
 		if (!(pAttacker->immuneToFirstStrikes()))
 		{
-			iOurDefense *= ((((firstStrikes() * 2) + chanceFirstStrikes()) * ((GC.getDefineINT("COMBAT_DAMAGE") * 2) / 5)) + 100);
+			// UncutDragon
+			// original
+			//iOurDefense *= ((((firstStrikes() * 2) + chanceFirstStrikes()) * ((GC.getDefineINT("COMBAT_DAMAGE") * 2) / 5)) + 100);
+			// modified
+			iOurDefense *= ((((firstStrikes() * 2) + chanceFirstStrikes()) * ((GC.getCOMBAT_DAMAGE() * 2) / 5)) + 100);
+			// /UncutDragon
 			iOurDefense /= 100;
 		}
 
 		if (immuneToFirstStrikes())
 		{
-			iOurDefense *= ((((pAttacker->firstStrikes() * 2) + pAttacker->chanceFirstStrikes()) * ((GC.getDefineINT("COMBAT_DAMAGE") * 2) / 5)) + 100);
+			// UncutDragon
+			// original
+			//iOurDefense *= ((((pAttacker->firstStrikes() * 2) + pAttacker->chanceFirstStrikes()) * ((GC.getDefineINT("COMBAT_DAMAGE") * 2) / 5)) + 100);
+			// modified
+			iOurDefense *= ((((pAttacker->firstStrikes() * 2) + pAttacker->chanceFirstStrikes()) * ((GC.getCOMBAT_DAMAGE() * 2) / 5)) + 100);
+			// /UncutDragon
 			iOurDefense /= 100;
 		}
 	}
@@ -1857,13 +1977,23 @@ bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttack
 	{
 		if (!(pAttacker->immuneToFirstStrikes()))
 		{
-			iTheirDefense *= ((((pDefender->firstStrikes() * 2) + pDefender->chanceFirstStrikes()) * ((GC.getDefineINT("COMBAT_DAMAGE") * 2) / 5)) + 100);
+			// UncutDragon
+			// original
+			//iTheirDefense *= ((((pDefender->firstStrikes() * 2) + pDefender->chanceFirstStrikes()) * ((GC.getDefineINT("COMBAT_DAMAGE") * 2) / 5)) + 100);
+			// modified
+			iTheirDefense *= ((((pDefender->firstStrikes() * 2) + pDefender->chanceFirstStrikes()) * ((GC.getCOMBAT_DAMAGE() * 2) / 5)) + 100);
+			// /UncutDragon
 			iTheirDefense /= 100;
 		}
 
 		if (pDefender->immuneToFirstStrikes())
 		{
-			iTheirDefense *= ((((pAttacker->firstStrikes() * 2) + pAttacker->chanceFirstStrikes()) * ((GC.getDefineINT("COMBAT_DAMAGE") * 2) / 5)) + 100);
+			// UncutDragon
+			// original
+			//iTheirDefense *= ((((pAttacker->firstStrikes() * 2) + pAttacker->chanceFirstStrikes()) * ((GC.getDefineINT("COMBAT_DAMAGE") * 2) / 5)) + 100);
+			// modified
+			iTheirDefense *= ((((pAttacker->firstStrikes() * 2) + pAttacker->chanceFirstStrikes()) * ((GC.getCOMBAT_DAMAGE() * 2) / 5)) + 100);
+			// /UncutDragon
 			iTheirDefense /= 100;
 		}
 	}
@@ -1895,6 +2025,9 @@ bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttack
 
 	return (iOurDefense > iTheirDefense);
 }
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 
 
 bool CvUnit::canDoCommand(CommandTypes eCommand, int iData1, int iData2, bool bTestVisible, bool bTestBusy)
@@ -2261,6 +2394,8 @@ bool CvUnit::willRevealByMove(const CvPlot* pPlot) const
 
 bool CvUnit::canMoveInto(const CvPlot* pPlot, bool bAttack, bool bDeclareWar, bool bIgnoreLoad) const
 {
+	PROFILE_FUNC();
+
 	FAssertMsg(pPlot != NULL, "Plot is not assigned a valid value");
 
 	if (atPlot(pPlot))
@@ -2312,7 +2447,18 @@ bool CvUnit::canMoveInto(const CvPlot* pPlot, bool bAttack, bool bDeclareWar, bo
 				}
 			}
 		}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       09/17/09                         TC01 & jdog5000      */
+/*                                                                                              */
+/* Bugfix				                                                                        */
+/************************************************************************************************/
+/* original bts code
 		else
+*/
+		// always check terrain also
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 		{
 			if (m_pUnitInfo->getTerrainImpassable(pPlot->getTerrainType()))
 			{
@@ -2431,6 +2577,12 @@ bool CvUnit::canMoveInto(const CvPlot* pPlot, bool bAttack, bool bDeclareWar, bo
 		}
 	}
 
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       07/23/09                                jdog5000      */
+/*                                                                                              */
+/* Consistency                                                                                  */
+/************************************************************************************************/
+/* original bts code
 	if (bAttack)
 	{
 		if (isMadeAttack() && !isBlitz())
@@ -2438,6 +2590,31 @@ bool CvUnit::canMoveInto(const CvPlot* pPlot, bool bAttack, bool bDeclareWar, bo
 			return false;
 		}
 	}
+*/
+	// The following change makes capturing an undefended city like a attack action, it
+	// cannot be done after another attack or a paradrop
+	/*
+	if (bAttack || (pPlot->isEnemyCity(*this) && !canCoexistWithEnemyUnit(NO_TEAM)) )
+	{
+		if (isMadeAttack() && !isBlitz())
+		{
+			return false;
+		}
+	}
+	*/
+
+	// The following change makes it possible to capture defenseless units after having 
+	// made a previous attack or paradrop
+	if( bAttack )
+	{
+		if (isMadeAttack() && !isBlitz() && (pPlot->getNumVisibleEnemyDefenders(this) > 0))
+		{
+			return false;
+		}
+	}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 
 	if (getDomainType() == DOMAIN_AIR)
 	{
@@ -2470,14 +2647,40 @@ bool CvUnit::canMoveInto(const CvPlot* pPlot, bool bAttack, bool bDeclareWar, bo
 
 			if (bAttack)
 			{
-				CvUnit* pDefender = pPlot->getBestDefender(NO_PLAYER, getOwnerINLINE(), this, true);
-				if (NULL != pDefender)
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      06/14/10                                jdog5000      */
+/*                                                                                              */
+/* Efficiency                                                                                   */
+/************************************************************************************************/
+				// From Lead From Behind by UncutDragon
+				// original
+				//CvUnit* pDefender = pPlot->getBestDefender(NO_PLAYER, getOwnerINLINE(), this, true);
+				//if (NULL != pDefender)
+				//{
+				//	if (!canAttack(*pDefender))
+				//	{
+				//		return false;
+				//	}
+				//}
+				// modified
+				if( combatLimit() < 100 )
 				{
-					if (!canAttack(*pDefender))
+					CvUnit* pDefender = pPlot->getBestDefender(NO_PLAYER, getOwnerINLINE(), this, true);
+					if (NULL != pDefender)
 					{
-						return false;
+						if (!canAttack(*pDefender))
+						{
+							return false;
+						}
 					}
 				}
+				else if (!pPlot->hasDefender(true, NO_PLAYER, getOwnerINLINE(), this, true))
+				{
+					return false;
+				}
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 			}
 		}
 		else
@@ -2876,10 +3079,36 @@ bool CvUnit::canAutomate(AutomateTypes eAutomate) const
 		break;
 
 	case AUTOMATE_EXPLORE:
-		if ((!canFight() && (getDomainType() != DOMAIN_SEA)) || (getDomainType() == DOMAIN_AIR) || (getDomainType() == DOMAIN_IMMOBILE))
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      04/25/10                                jdog5000      */
+/*                                                                                              */
+/* Player Interface                                                                             */
+/************************************************************************************************/
+		if ( !canFight() )
+		{
+			// Enable exploration for air units
+			if((getDomainType() != DOMAIN_SEA) && (getDomainType() != DOMAIN_AIR))
+			{
+				if( !(alwaysInvisible()) || !(isSpy()) )
+				{
+					return false;
+				}
+			}
+		}
+
+		if( (getDomainType() == DOMAIN_IMMOBILE) )
 		{
 			return false;
 		}
+
+		if( getDomainType() == DOMAIN_AIR && !canRecon(NULL) )
+		{
+			return false;
+		}
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/		
+
 		break;
 
 	case AUTOMATE_RELIGION:
@@ -3026,7 +3255,23 @@ void CvUnit::gift(bool bTestTransport)
 
 	pGiftUnit->convert(this);
 
-	GET_PLAYER(pGiftUnit->getOwnerINLINE()).AI_changePeacetimeGrantValue(eOwner, (pGiftUnit->getUnitInfo().getProductionCost() / 5));
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      10/03/09                                jdog5000      */
+/*                                                                                              */
+/* General AI                                                                                   */
+/************************************************************************************************/
+	//GET_PLAYER(pGiftUnit->getOwnerINLINE()).AI_changePeacetimeGrantValue(eOwner, (pGiftUnit->getUnitInfo().getProductionCost() / 5));
+	if( pGiftUnit->isCombat() )
+	{
+		GET_PLAYER(pGiftUnit->getOwnerINLINE()).AI_changePeacetimeGrantValue(eOwner, (pGiftUnit->getUnitInfo().getProductionCost() * 3 * GC.getGameINLINE().AI_combatValue(pGiftUnit->getUnitType()))/100);
+	}
+	else
+	{
+		GET_PLAYER(pGiftUnit->getOwnerINLINE()).AI_changePeacetimeGrantValue(eOwner, (pGiftUnit->getUnitInfo().getProductionCost()));
+	}
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 
 	szBuffer = gDLL->getText("TXT_KEY_MISC_GIFTED_UNIT_TO_YOU", GET_PLAYER(eOwner).getNameKey(), pGiftUnit->getNameKey());
 	gDLL->getInterfaceIFace()->addMessage(pGiftUnit->getOwnerINLINE(), false, GC.getEVENT_MESSAGE_TIME(), szBuffer, "AS2D_UNITGIFTED", MESSAGE_TYPE_INFO, pGiftUnit->getButton(), (ColorTypes)GC.getInfoTypeForString("COLOR_WHITE"), pGiftUnit->getX_INLINE(), pGiftUnit->getY_INLINE(), true, true);
@@ -3050,6 +3295,20 @@ bool CvUnit::canLoadUnit(const CvUnit* pUnit, const CvPlot* pPlot) const
 	{
 		return false;
 	}
+
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       06/23/10                     Mongoose & jdog5000      */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+	// From Mongoose SDK
+	if (isCargo() && getTransportUnit() == pUnit)
+	{
+		return false;
+	}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 
 	if (getCargo() > 0)
 	{
@@ -3111,10 +3370,22 @@ bool CvUnit::shouldLoadOnMove(const CvPlot* pPlot) const
 	switch (getDomainType())
 	{
 	case DOMAIN_LAND:
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       10/30/09                     Mongoose & jdog5000      */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+/* original bts code
 		if (pPlot->isWater())
+*/
+		// From Mongoose SDK
+		if (pPlot->isWater() && !canMoveAllTerrain())
 		{
 			return true;
 		}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 		break;
 	case DOMAIN_AIR:
 		if (!pPlot->isFriendlyCity(*this, true))
@@ -3424,10 +3695,25 @@ bool CvUnit::canHeal(const CvPlot* pPlot) const
 		return false;
 	}
 
+/*************************************************************************************************/
+/* UNOFFICIAL_PATCH                       06/30/10                           LunarMongoose       */
+/*                                                                                               */
+/* Bugfix                                                                                        */
+/*************************************************************************************************/
+/* original bts code
 	if (healRate(pPlot) <= 0)
 	{
 		return false;
 	}
+*/
+	// Mongoose FeatureDamageFix
+	if (healTurns(pPlot) == MAX_INT)
+	{
+		return false;
+	}
+/*************************************************************************************************/
+/* UNOFFICIAL_PATCH                         END                                                  */
+/*************************************************************************************************/
 
 	return true;
 }
@@ -3561,6 +3847,21 @@ int CvUnit::healTurns(const CvPlot* pPlot) const
 	}
 
 	iHeal = healRate(pPlot);
+
+/*************************************************************************************************/
+/* UNOFFICIAL_PATCH                       06/02/10                           LunarMongoose       */
+/*                                                                                               */
+/* Bugfix                                                                                        */
+/*************************************************************************************************/
+	// Mongoose FeatureDamageFix
+	FeatureTypes eFeature = pPlot->getFeatureType();
+	if (eFeature != NO_FEATURE)
+	{
+		iHeal -= GC.getFeatureInfo(eFeature).getTurnDamage();
+	}
+/*************************************************************************************************/
+/* UNOFFICIAL_PATCH                         END                                                  */
+/*************************************************************************************************/
 
 	if (iHeal > 0)
 	{
@@ -4442,6 +4743,20 @@ bool CvUnit::canPillage(const CvPlot* pPlot) const
 		return false;
 	}
 
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       06/23/10                     Mongoose & jdog5000      */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+	// From Mongoose SDK
+	if (isCargo())
+	{
+		return false;
+	}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
+
 	if (pPlot->getImprovementType() == NO_IMPROVEMENT)
 	{
 		if (!(pPlot->isRoute()))
@@ -4506,7 +4821,12 @@ bool CvUnit::pillage()
 
 	if (pPlot->isWater())
 	{
-		CvUnit* pInterceptor = bestSeaPillageInterceptor(this, GC.getDefineINT("COMBAT_DIE_SIDES") / 2);
+		// UncutDragon
+		// original
+		//CvUnit* pInterceptor = bestSeaPillageInterceptor(this, GC.getDefineINT("COMBAT_DIE_SIDES") / 2);
+		// modified
+		CvUnit* pInterceptor = bestSeaPillageInterceptor(this, GC.getCOMBAT_DIE_SIDES() / 2);
+		// /UncutDragon
 		if (NULL != pInterceptor)
 		{
 			setMadeAttack(false);
@@ -4652,28 +4972,62 @@ void CvUnit::updatePlunder(int iChange, bool bUpdatePlotGroups)
 	bool bOldTradeNet;
 	bool bChanged = false;
 
-	for (int iTeam = 0; iTeam < MAX_TEAMS; ++iTeam)
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      06/01/09                                jdog5000      */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+	//gDLL->getFAStarIFace()->ForceReset(&GC.getStepFinder());
+	bool bValid = false;
+	for (int i = -iBlockadeRange; i <= iBlockadeRange; ++i)
 	{
-		if (isEnemy((TeamTypes)iTeam))
+		for (int j = -iBlockadeRange; j <= iBlockadeRange; ++j)
 		{
-			for (int i = -iBlockadeRange; i <= iBlockadeRange; ++i)
+			CvPlot* pLoopPlot = ::plotXY(getX_INLINE(), getY_INLINE(), i, j);
+
+			if (NULL != pLoopPlot && pLoopPlot->isWater() && pLoopPlot->area() == area())
 			{
-				for (int j = -iBlockadeRange; j <= iBlockadeRange; ++j)
+
+				int iPathDist = GC.getMapINLINE().calculatePathDistance(plot(),pLoopPlot);
+				
+				// BBAI NOTES:  There are rare issues where the path finder will return incorrect results
+				// for unknown reasons.  Seems to find a suboptimal path sometimes in partially repeatable 
+				// circumstances.  The fix below is a hack to address the permanent one or two tile blockades which 
+				// would appear randomly, it should cause extra blockade clearing only very rarely.
+				/*
+				if( iPathDist > iBlockadeRange )
 				{
-					CvPlot* pLoopPlot = ::plotXY(getX_INLINE(), getY_INLINE(), i, j);
-
-					if (NULL != pLoopPlot && pLoopPlot->isWater() && pLoopPlot->area() == area())
+					// No blockading on other side of an isthmus
+					continue;
+				}
+				*/
+				
+				if( (iPathDist >= 0) && (iPathDist <= iBlockadeRange + 2) )
+				{
+					for (int iTeam = 0; iTeam < MAX_TEAMS; ++iTeam)
 					{
-						if (!bChanged)
+						if (isEnemy((TeamTypes)iTeam))
 						{
-							bOldTradeNet = pLoopPlot->isTradeNetwork((TeamTypes)iTeam);
-						}
+							bValid = (iPathDist <= iBlockadeRange);
+							if( !bValid && (iChange == -1 && pLoopPlot->getBlockadedCount((TeamTypes)iTeam) > 0) )
+							{
+								bValid = true;
+							}
 
-						pLoopPlot->changeBlockadedCount((TeamTypes)iTeam, iChange);
+							if( bValid )
+							{
+								if (!bChanged)
+								{
+									bOldTradeNet = pLoopPlot->isTradeNetwork((TeamTypes)iTeam);
+								}
 
-						if (!bChanged)
-						{
-							bChanged = (bOldTradeNet != pLoopPlot->isTradeNetwork((TeamTypes)iTeam));
+								pLoopPlot->changeBlockadedCount((TeamTypes)iTeam, iChange);
+
+								if (!bChanged)
+								{
+									bChanged = (bOldTradeNet != pLoopPlot->isTradeNetwork((TeamTypes)iTeam));
+								}
+							}
 						}
 					}
 				}
@@ -4690,6 +5044,9 @@ void CvUnit::updatePlunder(int iChange, bool bUpdatePlotGroups)
 			GC.getGameINLINE().updatePlotGroups();
 		}
 	}
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 }
 
 
@@ -5236,6 +5593,12 @@ bool CvUnit::canSpread(const CvPlot* pPlot, ReligionTypes eReligion, bool bTestV
 {
 	CvCity* pCity;
 
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       08/19/09                                jdog5000      */
+/*                                                                                              */
+/* Efficiency                                                                                   */
+/************************************************************************************************/
+/* orginal bts code
 	if (GC.getUSE_USE_CANNOT_SPREAD_RELIGION_CALLBACK())
 	{
 		CyArgsList argsList;
@@ -5251,6 +5614,11 @@ bool CvUnit::canSpread(const CvPlot* pPlot, ReligionTypes eReligion, bool bTestV
 			return false;
 		}
 	}
+*/
+				// UP efficiency: Moved below faster calls
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 
 	if (eReligion == NO_RELIGION)
 	{
@@ -5292,6 +5660,30 @@ bool CvUnit::canSpread(const CvPlot* pPlot, ReligionTypes eReligion, bool bTestV
 			}
 		}
 	}
+
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       08/19/09                                jdog5000      */
+/*                                                                                              */
+/* Efficiency                                                                                   */
+/************************************************************************************************/
+	if (GC.getUSE_USE_CANNOT_SPREAD_RELIGION_CALLBACK())
+	{
+		CyArgsList argsList;
+		argsList.add(getOwnerINLINE());
+		argsList.add(getID());
+		argsList.add((int) eReligion);
+		argsList.add(pPlot->getX());
+		argsList.add(pPlot->getY());
+		long lResult=0;
+		gDLL->getPythonIFace()->callFunction(PYGameModule, "cannotSpreadReligion", argsList.makeFunctionArgs(), &lResult);
+		if (lResult > 0)
+		{
+			return false;
+		}
+	}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 
 	return true;
 }
@@ -6284,7 +6676,11 @@ bool CvUnit::isIntruding() const
 		return false;
 	}
 
-	if (GET_TEAM(eLocalTeam).isVassal(getTeam()))
+	// UNOFFICIAL_PATCH Start
+	// * Vassal's spies no longer caught in master's territory
+	//if (GET_TEAM(eLocalTeam).isVassal(getTeam()))
+	if (GET_TEAM(eLocalTeam).isVassal(getTeam()) || GET_TEAM(getTeam()).isVassal(eLocalTeam))
+	// UNOFFICIAL_PATCH End
 	{
 		return false;
 	}
@@ -6667,7 +7063,7 @@ int CvUnit::upgradePrice(UnitTypes eUnit) const
 	iPrice = GC.getDefineINT("BASE_UNIT_UPGRADE_COST");
 
 	iPrice += (std::max(0, (GET_PLAYER(getOwnerINLINE()).getProductionNeeded(eUnit) - GET_PLAYER(getOwnerINLINE()).getProductionNeeded(getUnitType()))) * GC.getDefineINT("UNIT_UPGRADE_COST_PER_PRODUCTION"));
-
+	iPrice/=2; //hardcoded discount.
 	if (!isHuman() && !isBarbarian())
 	{
 		iPrice *= GC.getHandicapInfo(GC.getGameINLINE().getHandicapType()).getAIUnitUpgradePercent();
@@ -7007,6 +7403,20 @@ void CvUnit::upgrade(UnitTypes eUnit)
 			pUpgradeUnit->setExperience(GC.getDefineINT("MAX_EXPERIENCE_AFTER_UPGRADE"));
 		}
 	}
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      02/24/10                                jdog5000      */
+/*                                                                                              */
+/* AI Logging                                                                                   */
+/************************************************************************************************/
+	if( gUnitLogLevel > 2 )
+	{
+		CvWString szString;
+		getUnitAIString(szString, AI_getUnitAIType());
+		logBBAI("    %S spends %d to upgrade %S to %S, unit AI %S", GET_PLAYER(getOwnerINLINE()).getCivilizationDescription(0), upgradePrice(eUnit), getName(0).GetCString(), pUpgradeUnit->getName(0).GetCString(), szString.GetCString());
+	}
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 }
 
 
@@ -7608,7 +8018,25 @@ int CvUnit::maxCombatStr(const CvPlot* pPlot, const CvUnit* pAttacker, CombatDet
 	{
 		if (!noDefensiveBonus())
 		{
-			iExtraModifier = pPlot->defenseModifier(getTeam(), (pAttacker != NULL) ? pAttacker->ignoreBuildingDefense() : true);
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      03/30/10                                jdog5000      */
+/*                                                                                              */
+/* General AI                                                                                   */
+/************************************************************************************************/
+			// When pAttacker is NULL but pPlot is not, this is a computation for this units defensive value
+			// against an unknown attacker.  Always ignoring building defense in this case is a conservative estimate,
+			// but causes AI to suicide against castle walls of low culture cities in early game.  Using this units
+			// ignoreBuildingDefense does a little better ... in early game it corrects undervalue of castles.  One
+			// downside is when medieval unit is defending a walled city against gunpowder.  Here, the over value
+			// makes attacker a little more cautious, but with their tech lead it shouldn't matter too much.  Also
+			// makes vulnerable units (ships, etc) feel safer in this case and potentially not leave, but ships
+			// leave when ratio is pretty low anyway.
+
+			//iExtraModifier = pPlot->defenseModifier(getTeam(), (pAttacker != NULL) ? pAttacker->ignoreBuildingDefense() : true);
+			iExtraModifier = pPlot->defenseModifier(getTeam(), (pAttacker != NULL) ? pAttacker->ignoreBuildingDefense() : ignoreBuildingDefense());
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 			iModifier += iExtraModifier;
 			if (pCombatDetails != NULL)
 			{
@@ -7670,7 +8098,18 @@ int CvUnit::maxCombatStr(const CvPlot* pPlot, const CvUnit* pAttacker, CombatDet
 	}
 
 	// calc attacker bonueses
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       09/20/09                                jdog5000      */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+/* original code
 	if (pAttacker != NULL)
+*/
+	if (pAttacker != NULL && pAttackedPlot != NULL)
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 	{
 		int iTempModifier = 0;		
 
@@ -8019,10 +8458,21 @@ int CvUnit::airMaxCombatStr(const CvUnit* pOther) const
 		iModifier += getKamikazePercent();
 	}
 
+/********************************************************************************/
+/* 	BETTER_BTS_AI_MOD						8/16/08		DanF5771 & jdog5000	*/
+/* 																			*/
+/* 	Bugfix																	*/
+/********************************************************************************/
+/* original BTS code
 	if (getExtraCombatPercent() != 0)
 	{
 		iModifier += getExtraCombatPercent();
 	}
+*/
+	// ExtraCombatPercent already counted above
+/********************************************************************************/
+/* 	BETTER_BTS_AI_MOD						END								*/
+/********************************************************************************/
 
 	if (NULL != pOther)
 	{
@@ -8102,7 +8552,20 @@ bool CvUnit::canAirDefend(const CvPlot* pPlot) const
 
 	if (getDomainType() != DOMAIN_AIR)
 	{
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       10/30/09                     Mongoose & jdog5000      */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+/* original bts code
 		if (!pPlot->isValidDomainForLocation(*this))
+*/
+		// From Mongoose SDK
+		// Land units which are cargo cannot intercept
+		if (!pPlot->isValidDomainForLocation(*this) || isCargo())
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 		{
 			return false;
 		}
@@ -8219,6 +8682,13 @@ CvUnit* CvUnit::bestInterceptor(const CvPlot* pPlot) const
 CvUnit* CvUnit::bestSeaPillageInterceptor(CvUnit* pPillager, int iMinOdds) const
 {
 	CvUnit* pBestUnit = NULL;
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      02/21/10                                jdog5000      */
+/*                                                                                              */
+/* Lead From Behind                                                                             */
+/************************************************************************************************/
+	// From Lead From Behind by UncutDragon
+	int pBestUnitRank = -1;
 
 	for (int iDX = -1; iDX <= 1; ++iDX)
 	{
@@ -8247,7 +8717,12 @@ CvUnit* CvUnit::bestSeaPillageInterceptor(CvUnit* pPillager, int iMinOdds) const
 									{
 										if (ACTIVITY_PATROL == pLoopUnit->getGroup()->getActivityType())
 										{
-											if (NULL == pBestUnit || pLoopUnit->isBetterDefenderThan(pBestUnit, this))
+											// UncutDragon
+											// orignal
+											//if (NULL == pBestUnit || pLoopUnit->isBetterDefenderThan(pBestUnit, this))
+											// modified (added extra parameter)
+											if (NULL == pBestUnit || pLoopUnit->isBetterDefenderThan(pBestUnit, this, &pBestUnitRank))
+											// /UncutDragon
 											{
 												if (getCombatOdds(pPillager, pLoopUnit) < iMinOdds)
 												{
@@ -8264,6 +8739,9 @@ CvUnit* CvUnit::bestSeaPillageInterceptor(CvUnit* pPillager, int iMinOdds) const
 			}
 		}
 	}
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 
 	return pBestUnit;
 }
@@ -9249,7 +9727,20 @@ void CvUnit::setXY(int iX, int iY, bool bGroup, bool bUpdate, bool bShow, bool b
 			if (isEnemy(pNewCity->getTeam()) && !canCoexistWithEnemyUnit(pNewCity->getTeam()) && canFight())
 			{
 				GET_TEAM(getTeam()).changeWarWeariness(pNewCity->getTeam(), *pNewPlot, GC.getDefineINT("WW_CAPTURED_CITY"));
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      06/14/09                                jdog5000      */
+/*                                                                                              */
+/* General AI                                                                                   */
+/************************************************************************************************/
+/* original bts code
 				GET_TEAM(getTeam()).AI_changeWarSuccess(pNewCity->getTeam(), GC.getDefineINT("WAR_SUCCESS_CITY_CAPTURING"));
+*/
+				// Double war success if capturing capital city, always a significant blow to enemy
+				// pNewCity still points to old city here, hasn't been acquired yet
+				GET_TEAM(getTeam()).AI_changeWarSuccess(pNewCity->getTeam(), (pNewCity->isCapital() ? 2 : 1)*GC.getWAR_SUCCESS_CITY_CAPTURING());
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 
 				PlayerTypes eNewOwner = GET_PLAYER(getOwnerINLINE()).pickConqueredCityOwner(*pNewCity);
 
@@ -11506,7 +11997,10 @@ void CvUnit::collateralCombat(const CvPlot* pPlot, CvUnit* pSkipUnit)
 	std::map<CvUnit*, int>::iterator it;
 
 	int iCollateralStrength = (getDomainType() == DOMAIN_AIR ? airBaseCombatStr() : baseCombatStr()) * collateralDamage() / 100;
-	if (iCollateralStrength == 0)
+	// UNOFFICIAL_PATCH Start
+	// * Barrage promotions made working again on Tanks and other units with no base collateral ability
+	if (iCollateralStrength == 0 && getExtraCollateralDamage() == 0)
+	// UNOFFICIAL_PATCH End
 	{
 		return;
 	}
@@ -11652,7 +12146,19 @@ void CvUnit::flankingStrikeCombat(const CvPlot* pPlot, int iAttackerStrength, in
 
 							getDefenderCombatValues(*pLoopUnit, pPlot, iAttackerStrength, iAttackerFirepower, iFlankedDefenderOdds, iFlankedDefenderStrength, iAttackerDamage, iFlankedDefenderDamage);
 
-							if (GC.getGameINLINE().getSorenRandNum(GC.getDefineINT("COMBAT_DIE_SIDES"), "Flanking Combat") >= iDefenderOdds)
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      02/21/10                                jdog5000      */
+/*                                                                                              */
+/* Efficiency                                                                                   */
+/************************************************************************************************/
+							// From Lead From Behind by UncutDragon
+							// original
+							//if (GC.getGameINLINE().getSorenRandNum(GC.getDefineINT("COMBAT_DIE_SIDES"), "Flanking Combat") >= iDefenderOdds)
+							// modified
+							if (GC.getGameINLINE().getSorenRandNum(GC.getCOMBAT_DIE_SIDES(), "Flanking Combat") >= iDefenderOdds)
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 							{
 								int iCollateralDamage = (iFlankingStrength * iDefenderDamage) / 100;
 								int iUnitDamage = std::max(pLoopUnit->getDamage(), std::min(pLoopUnit->getDamage() + iCollateralDamage, collateralDamageLimit()));
@@ -11876,6 +12382,20 @@ bool CvUnit::canRangeStrikeAt(const CvPlot* pPlot, int iX, int iY) const
 		return false;
 	}
 
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       05/10/10                             jdog5000         */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+	// Need to check target plot too
+	if (!pTargetPlot->isVisible(getTeam(), false))
+	{
+		return false;
+	}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
+
 	if (plotDistance(pPlot->getX_INLINE(), pPlot->getY_INLINE(), pTargetPlot->getX_INLINE(), pTargetPlot->getY_INLINE()) > airRange())
 	{
 		return false;
@@ -11909,10 +12429,24 @@ bool CvUnit::rangeStrike(int iX, int iY)
 		return false;
 	}
 
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       05/10/10                             jdog5000         */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+/* original bts code
 	if (!canRangeStrikeAt(pPlot, iX, iY))
 	{
 		return false;
 	}
+*/
+	if (!canRangeStrikeAt(plot(), iX, iY))
+	{
+		return false;
+	}
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 
 	pDefender = airStrikeTarget(pPlot);
 
@@ -11955,7 +12489,20 @@ bool CvUnit::rangeStrike(int iX, int iY)
 		gDLL->getEntityIFace()->AddMission(&kDefiniton);
 
 		//delay death
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                       05/10/10                             jdog5000         */
+/*                                                                                              */
+/* Bugfix                                                                                       */
+/************************************************************************************************/
+/* original bts code
 		pDefender->getGroup()->setMissionTimer(GC.getMissionInfo(MISSION_RANGE_ATTACK).getTime());
+*/
+		// mission timer is not used like this in any other part of code, so it might cause OOS
+		// issues ... at worst I think unit dies before animation is complete, so no real
+		// harm in commenting it out.
+/************************************************************************************************/
+/* UNOFFICIAL_PATCH                        END                                                  */
+/************************************************************************************************/
 	}
 
 	return true;
@@ -12282,27 +12829,55 @@ void CvUnit::getDefenderCombatValues(CvUnit& kDefender, const CvPlot* pPlot, int
 	FAssert((iOurStrength + iTheirStrength) > 0);
 	FAssert((iOurFirepower + iTheirFirepower) > 0);
 
-	iTheirOdds = ((GC.getDefineINT("COMBAT_DIE_SIDES") * iTheirStrength) / (iOurStrength + iTheirStrength));
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      02/21/10                                jdog5000      */
+/*                                                                                              */
+/* Efficiency                                                                                   */
+/************************************************************************************************/
+	// From Lead From Behind by UncutDragon
+	// original
+	//iTheirOdds = ((GC.getDefineINT("COMBAT_DIE_SIDES") * iTheirStrength) / (iOurStrength + iTheirStrength));
+	// modified
+	iTheirOdds = ((GC.getCOMBAT_DIE_SIDES() * iTheirStrength) / (iOurStrength + iTheirStrength));
 
 	if (kDefender.isBarbarian())
 	{
 		if (GET_PLAYER(getOwnerINLINE()).getWinsVsBarbs() < GC.getHandicapInfo(GET_PLAYER(getOwnerINLINE()).getHandicapType()).getFreeWinsVsBarbs())
 		{
-			iTheirOdds = std::min((10 * GC.getDefineINT("COMBAT_DIE_SIDES")) / 100, iTheirOdds);
+			// UncutDragon
+			// original
+			//iTheirOdds = std::min((10 * GC.getDefineINT("COMBAT_DIE_SIDES")) / 100, iTheirOdds);
+			// modified
+			iTheirOdds = std::min((10 * GC.getCOMBAT_DIE_SIDES()) / 100, iTheirOdds);
+			// /UncutDragon
 		}
 	}
 	if (isBarbarian())
 	{
 		if (GET_PLAYER(kDefender.getOwnerINLINE()).getWinsVsBarbs() < GC.getHandicapInfo(GET_PLAYER(kDefender.getOwnerINLINE()).getHandicapType()).getFreeWinsVsBarbs())
 		{
-			iTheirOdds =  std::max((90 * GC.getDefineINT("COMBAT_DIE_SIDES")) / 100, iTheirOdds);
+			// UncutDragon
+			// original
+			//iTheirOdds =  std::max((90 * GC.getDefineINT("COMBAT_DIE_SIDES")) / 100, iTheirOdds);
+			// modified
+			iTheirOdds =  std::max((90 * GC.getCOMBAT_DIE_SIDES()) / 100, iTheirOdds);
+			// /UncutDragon
 		}
 	}
 
 	int iStrengthFactor = ((iOurFirepower + iTheirFirepower + 1) / 2);
 
-	iOurDamage = std::max(1, ((GC.getDefineINT("COMBAT_DAMAGE") * (iTheirFirepower + iStrengthFactor)) / (iOurFirepower + iStrengthFactor)));
-	iTheirDamage = std::max(1, ((GC.getDefineINT("COMBAT_DAMAGE") * (iOurFirepower + iStrengthFactor)) / (iTheirFirepower + iStrengthFactor)));
+	// UncutDragon
+	// original
+	//iOurDamage = std::max(1, ((GC.getDefineINT("COMBAT_DAMAGE") * (iTheirFirepower + iStrengthFactor)) / (iOurFirepower + iStrengthFactor)));
+	//iTheirDamage = std::max(1, ((GC.getDefineINT("COMBAT_DAMAGE") * (iOurFirepower + iStrengthFactor)) / (iTheirFirepower + iStrengthFactor)));
+	// modified
+	iOurDamage = std::max(1, ((GC.getCOMBAT_DAMAGE() * (iTheirFirepower + iStrengthFactor)) / (iOurFirepower + iStrengthFactor)));
+	iTheirDamage = std::max(1, ((GC.getCOMBAT_DAMAGE() * (iOurFirepower + iStrengthFactor)) / (iTheirFirepower + iStrengthFactor)));
+	// /UncutDragon
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
 }
 
 int CvUnit::getTriggerValue(EventTriggerTypes eTrigger, const CvPlot* pPlot, bool bCheckPlot) const
@@ -12673,3 +13248,258 @@ int CvUnit::getSelectionSoundScript() const
 	}
 	return iScriptId;
 }
+
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                      02/21/10                                jdog5000      */
+/*                                                                                              */
+/* Lead From Behind                                                                             */
+/************************************************************************************************/
+// From Lead From Behind by UncutDragon
+
+// Original isBetterDefenderThan call (without the extra parameter) - now just a pass-through
+bool CvUnit::isBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker) const
+{
+	return isBetterDefenderThan(pDefender, pAttacker, NULL);
+}
+
+// Modified version of best defender code (minus the initial boolean tests,
+// which we still check in the original method)
+bool CvUnit::LFBisBetterDefenderThan(const CvUnit* pDefender, const CvUnit* pAttacker, int* pBestDefenderRank) const
+{
+	// We adjust ranking based on ratio of our adjusted strength compared to twice that of attacker
+	// Effect is if we're over twice as strong as attacker, we increase our ranking
+	// (more likely to be picked as defender) - otherwise, we reduce our ranking (less likely)
+
+	// Get our adjusted rankings based on combat odds
+	int iOurRanking = LFBgetDefenderRank(pAttacker);
+	int iTheirRanking = -1;
+	if (pBestDefenderRank)
+		iTheirRanking = (*pBestDefenderRank);
+	if (iTheirRanking == -1)
+		iTheirRanking = pDefender->LFBgetDefenderRank(pAttacker);
+
+	// In case of equal value, fall back on unit cycle order
+	if (iOurRanking == iTheirRanking)
+	{
+		if (isBeforeUnitCycle(this, pDefender))
+			iTheirRanking--;
+		else
+			iTheirRanking++;
+	}
+
+	// Retain the basic rank (before value adjustment) for the best defender
+	if (pBestDefenderRank)
+		if (iOurRanking > iTheirRanking)
+			(*pBestDefenderRank) = iOurRanking;
+
+	return (iOurRanking > iTheirRanking);
+}
+
+// Get the (adjusted) odds of attacker winning to use in deciding best attacker
+int CvUnit::LFBgetAttackerRank(const CvUnit* pDefender, int& iUnadjustedRank) const
+{
+	if (pDefender)
+	{
+		int iDefOdds = pDefender->LFBgetDefenderOdds(this);
+		iUnadjustedRank = 1000 - iDefOdds;
+		// If attacker has a chance to withdraw, factor that in as well
+		if (withdrawalProbability() > 0)
+			iUnadjustedRank += ((iDefOdds * withdrawalProbability()) / 100);
+	} else {
+		// No defender ... just use strength, but try to make it a number out of 1000
+		iUnadjustedRank = currCombatStr(NULL, NULL) / 5;
+	}
+	int iRank = LFBgetValueAdjustedOdds(iUnadjustedRank);
+
+	return iRank;
+}
+
+// Get the (adjusted) odds of defender winning to use in deciding best defender
+int CvUnit::LFBgetDefenderRank(const CvUnit* pAttacker) const
+{
+	int iRank = LFBgetDefenderOdds(pAttacker);
+	// Don't adjust odds for value if attacker is limited in their damage (i.e: no risk of death)
+	if ((pAttacker != NULL) && (maxHitPoints() == pAttacker->combatLimit()))
+	iRank = LFBgetValueAdjustedOdds(iRank);
+
+	return iRank;
+}
+
+// Get the unadjusted odds of defender winning (used for both best defender and best attacker)
+int CvUnit::LFBgetDefenderOdds(const CvUnit* pAttacker) const
+{
+	// Check if we have a valid attacker
+	bool bUseAttacker = false;
+	int iAttStrength = 0;
+	if (pAttacker)
+		iAttStrength = pAttacker->currCombatStr(NULL, NULL);
+	if (iAttStrength > 0)
+		bUseAttacker = true;
+
+	int iDefense = 0;
+
+	if (bUseAttacker && GC.getLFBUseCombatOdds())
+	{
+		// We start with straight combat odds
+		iDefense = LFBgetDefenderCombatOdds(pAttacker);
+	} else {
+		// Lacking a real opponent (or if combat odds turned off) fall back on just using strength
+		iDefense = currCombatStr(plot(), pAttacker);
+		if (bUseAttacker)
+		{
+			// Similiar to the standard method, except I reduced the affect (cut it in half) handle attacker
+			// and defender together (instead of applying one on top of the other) and substract the
+			// attacker first strikes (instead of adding attacker first strikes when defender is immune)
+			int iFirstStrikes = 0;
+
+			if (!pAttacker->immuneToFirstStrikes())
+				iFirstStrikes += (firstStrikes() * 2) + chanceFirstStrikes();
+			if (!immuneToFirstStrikes())
+				iFirstStrikes -= ((pAttacker->firstStrikes() * 2) + pAttacker->chanceFirstStrikes());
+
+			if (iFirstStrikes != 0)
+			{
+				// With COMBAT_DAMAGE=20, this makes each first strike worth 8% (and each chance worth 4%)
+				iDefense *= ((iFirstStrikes * GC.getCOMBAT_DAMAGE() / 5) + 100);
+				iDefense /= 100;
+			}
+
+			// Make it a number out of 1000, taking attacker into consideration
+			iDefense = (iDefense * 1000) / (iDefense + iAttStrength);			
+		}
+	}
+
+	if (hasCargo())
+	{
+		// This part is taken directly from the standard method
+		// Reduces value if a unit is carrying other units
+		int iAssetValue = std::max(1, getUnitInfo().getAssetValue());
+		int iCargoAssetValue = 0;
+		std::vector<CvUnit*> aCargoUnits;
+		getCargoUnits(aCargoUnits);
+		for (uint i = 0; i < aCargoUnits.size(); ++i)
+		{
+			iCargoAssetValue += aCargoUnits[i]->getUnitInfo().getAssetValue();
+		}
+		iDefense = iDefense * iAssetValue / std::max(1, iAssetValue + iCargoAssetValue);
+	}
+
+	return iDefense;
+}
+
+// Take the unadjusted odds and adjust them based on unit value
+int CvUnit::LFBgetValueAdjustedOdds(int iOdds) const
+{
+	// Adjust odds based on value
+	int iValue = LFBgetRelativeValueRating();
+	long iAdjustment = -250;
+	if (GC.getLFBUseSlidingScale())
+		iAdjustment = (iOdds - 990);
+	// Value Adjustment = (odds-990)*(value*num/denom)^2
+	long iValueAdj = (long)(iValue * GC.getLFBAdjustNumerator());
+	iValueAdj *= iValueAdj;
+	iValueAdj *= iAdjustment;
+	iValueAdj /= (long)(GC.getLFBAdjustDenominator() * GC.getLFBAdjustDenominator());
+	int iRank = iOdds + iValueAdj + 10000;
+	// Note that the +10000 is just to try keeping it > 0 - doesn't really matter, other than that -1
+	// would be interpreted later as not computed yet, which would cause us to compute it again each time
+
+	return iRank;
+}
+
+// Method to evaluate the value of a unit relative to another
+int CvUnit::LFBgetRelativeValueRating() const
+{
+	int iValueRating = 0;
+
+	// Check if led by a Great General
+	if (GC.getLFBBasedOnGeneral() > 0)
+		if (NO_UNIT != getLeaderUnitType())
+			iValueRating += GC.getLFBBasedOnGeneral();
+
+	// Assign experience value in tiers
+	if (GC.getLFBBasedOnExperience() > 0)
+	{
+		int iTier = 10;
+		while (getExperience() >= iTier)
+		{
+			iValueRating += GC.getLFBBasedOnExperience();
+			iTier *= 2;
+		}
+	}
+
+	// Check if unit is limited in how many can exist
+	if (GC.getLFBBasedOnLimited() > 0)
+		if (isLimitedUnitClass(getUnitClassType()))
+			iValueRating += GC.getLFBBasedOnLimited();
+
+	// Check if unit has ability to heal
+	if (GC.getLFBBasedOnHealer() > 0)
+		if (getSameTileHeal() > 0)
+			iValueRating += GC.getLFBBasedOnHealer();
+
+	return iValueRating;
+}
+
+int CvUnit::LFBgetDefenderCombatOdds(const CvUnit* pAttacker) const
+{
+	int iAttackerStrength;
+	int iAttackerFirepower;
+	int iDefenderStrength;
+	int iDefenderFirepower;
+	int iDefenderOdds;
+	int iStrengthFactor;
+	int iDamageToAttacker;
+	int iDamageToDefender;
+	int iNeededRoundsAttacker;
+	int iNeededRoundsDefender;
+	int iAttackerLowFS;
+	int iAttackerHighFS;
+	int iDefenderLowFS;
+	int iDefenderHighFS;
+	int iDefenderHitLimit;
+
+	iAttackerStrength = pAttacker->currCombatStr(NULL, NULL);
+	iAttackerFirepower = pAttacker->currFirepower(NULL, NULL);
+
+	iDefenderStrength = currCombatStr(plot(), pAttacker);
+	iDefenderFirepower = currFirepower(plot(), pAttacker);
+
+	FAssert((iAttackerStrength + iDefenderStrength) > 0);
+	FAssert((iAttackerFirepower + iDefenderFirepower) > 0);
+
+	iDefenderOdds = ((GC.getCOMBAT_DIE_SIDES() * iDefenderStrength) / (iAttackerStrength + iDefenderStrength));
+	iStrengthFactor = ((iAttackerFirepower + iDefenderFirepower + 1) / 2);
+
+	// calculate damage done in one round
+	//////
+
+	iDamageToAttacker = std::max(1,((GC.getCOMBAT_DAMAGE() * (iDefenderFirepower + iStrengthFactor)) / (iAttackerFirepower + iStrengthFactor)));
+	iDamageToDefender = std::max(1,((GC.getCOMBAT_DAMAGE() * (iAttackerFirepower + iStrengthFactor)) / (iDefenderFirepower + iStrengthFactor)));
+
+	// calculate needed rounds.
+	// Needed rounds = round_up(health/damage)
+	//////
+
+	iDefenderHitLimit = maxHitPoints() - pAttacker->combatLimit();
+
+	iNeededRoundsAttacker = (std::max(0, currHitPoints() - iDefenderHitLimit) + iDamageToDefender - 1 ) / iDamageToDefender;
+	iNeededRoundsDefender = (pAttacker->currHitPoints() + iDamageToAttacker - 1 ) / iDamageToAttacker;
+
+	// calculate possible first strikes distribution.
+	// We can't use the getCombatFirstStrikes() function (only one result,
+	// no distribution), so we need to mimic it.
+	//////
+
+	iAttackerLowFS = (immuneToFirstStrikes()) ? 0 : pAttacker->firstStrikes();
+	iAttackerHighFS = (immuneToFirstStrikes()) ? 0 : (pAttacker->firstStrikes() + pAttacker->chanceFirstStrikes());
+
+	iDefenderLowFS = (pAttacker->immuneToFirstStrikes()) ? 0 : firstStrikes();
+	iDefenderHighFS = (pAttacker->immuneToFirstStrikes()) ? 0 : (firstStrikes() + chanceFirstStrikes());
+
+	return LFBgetCombatOdds(iDefenderLowFS, iDefenderHighFS, iAttackerLowFS, iAttackerHighFS, iNeededRoundsDefender, iNeededRoundsAttacker, iDefenderOdds);
+}
+/************************************************************************************************/
+/* BETTER_BTS_AI_MOD                       END                                                  */
+/************************************************************************************************/
+

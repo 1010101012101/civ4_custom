@@ -239,7 +239,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				AdditionalDependencies="boost_python-vc71-mt-1_32.lib winmm.lib msvcprt.lib"
-				OutputFile="../Beyond the Sword/Assets/CvGameCoreDLL.dll"
+				OutputFile="I:\game\Civilization4\Beyond The Sword\Assets\CvGameCoreDLL.dll"
 				LinkIncremental="2"
 				AdditionalLibraryDirectories="Python24\libs;&quot;boost-1.32.0\libs\&quot;"
 				IgnoreDefaultLibraryNames="msvcprtd.lib"
@@ -304,6 +304,9 @@
 						Name="VCCLCompilerTool"
 						UsePrecompiledHeader="1"/>
 				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\BetterBTSAI.cpp">
 			</File>
 			<File
 				RelativePath=".\CvArea.cpp">
@@ -1023,6 +1026,9 @@
 			UniqueIdentifier="{93995380-89BD-4b04-88EB-625FBE52EBFB}">
 			<File
 				RelativePath=".\AI_Defines.h">
+			</File>
+			<File
+				RelativePath=".\BetterBTSAI.h">
 			</File>
 			<File
 				RelativePath=".\CvArea.h">
